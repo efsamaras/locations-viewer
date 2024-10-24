@@ -58,14 +58,30 @@ export class MapComponent implements OnInit {
             this.map = new google.maps.Map(this.mapElement.nativeElement, this.options);
             this.infoWindow = new google.maps.InfoWindow();
             this.map.addListener('idle', () => {
-                this.createMarkers();
+                this.initMarkers();
+                this.throttleZoom();
             });
         });
     }
 
+    initMarkers() {
+        const markers = this.createMarkers();
+
+        const clusterOptions = {
+            map: this.map,
+            markers,
+            algorithm: new SuperClusterAlgorithm({
+                radius: 300,
+                minPoints: 3,
+            }),
+        };
+
+        this.markerClusterer = new MarkerClusterer(clusterOptions);
+    }
+
     createMarkers() {
         const bounds = this.map.getBounds();
-        const markers = this.locations
+        return this.locations
             .filter((location) => !bounds || bounds.contains(location.coordinates))
             .map((location) => {
                 const marker = new google.maps.Marker({
@@ -80,17 +96,22 @@ export class MapComponent implements OnInit {
 
                 return marker;
             });
+    }
 
-        const clusterOptions = {
-            map: this.map,
-            markers,
-            algorithm: new SuperClusterAlgorithm({
-                radius: 300,
-                minPoints: 3,
-            }),
-        };
+    throttleZoom() {
+        const zoomChanged$ = new Observable((observer) => {
+            const listener = this.map.addListener('zoom_changed', () => {
+                this.ngZone.run(() => observer.next());
+            });
+            return () => google.maps.event.removeListener(listener);
+        });
+        zoomChanged$.pipe(debounceTime(300)).subscribe(() => {
+            this.markerClusterer.clearMarkers(true);
+            const newMarkers = this.createMarkers();
 
-        this.markerClusterer = new MarkerClusterer(clusterOptions);
+            this.markerClusterer.addMarkers(newMarkers, true);
+            this.markerClusterer.render();
+        });
     }
 
     onMarkerClick(marker: google.maps.Marker, location: MapLocation) {
